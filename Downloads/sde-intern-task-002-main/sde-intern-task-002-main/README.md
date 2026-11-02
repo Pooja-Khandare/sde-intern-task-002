@@ -11,3 +11,6 @@
 3. **Idempotency & Concurrent Safety Mechanisms:**
    - **Decision:** Implemented header-based idempotency checks (`Idempotency-Key`) for payment routes.
    - **Why:** Prevents duplicate payments from accidental double-submits, ensures safe handling of concurrent requests, and maintains data integrity under race conditions without breaking database constraints.
+
+
+(pnpm install, pnpm check, pnpm typecheck, pnpm test)

@@ -2,17 +2,11 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 
 export const Route = createFileRoute('/')({
-  component: Home,
+  component: Index,
 })
-
-interface HomeType {
-  id: string
-  name: string
-}
 
 interface Member {
   id: string
-  homeId: string
   name: string
 }
 
@@ -25,7 +19,6 @@ interface Share {
 
 interface Bill {
   id: string
-  homeId: string
   title: string
   totalCents: number
   shares: Share[]
@@ -37,26 +30,43 @@ interface Balance {
   outstandingCents: number
 }
 
-function Home() {
+interface Home {
+  id: string
+  name: string
+}
+
+function Index() {
   const [homeName, setHomeName] = useState('')
-  const [home, setHome] = useState<HomeType | null>(null)
+  const [home, setHome] = useState<Home | null>(null)
   const [memberName, setMemberName] = useState('')
   const [members, setMembers] = useState<Member[]>([])
-  
   const [billTitle, setBillTitle] = useState('')
   const [totalCents, setTotalCents] = useState('')
   const [bills, setBills] = useState<Bill[]>([])
   const [balances, setBalances] = useState<Balance[]>([])
-
+  const [idempotencyKey, setIdempotencyKey] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [idempotencyKey, setIdempotencyKey] = useState('key-123')
+
+  const fetchBalances = async (homeId: string) => {
+    try {
+      setLoading(true)
+      const res = await fetch(`/api/homes/${homeId}/balances`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to fetch balances')
+      setBalances(data.balances)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to fetch balances'
+      setError(message)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const createHome = async (e: React.FormEvent) => {
     e.preventDefault()
-    setLoading(true)
-    setError(null)
     try {
+      setError(null)
       const res = await fetch('/api/homes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -67,19 +77,17 @@ function Home() {
       setHome(data)
       setHomeName('')
       fetchBalances(data.id)
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to create home'
+      setError(message)
     }
   }
 
   const addMember = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!home) return
-    setLoading(true)
-    setError(null)
     try {
+      setError(null)
       const res = await fetch(`/api/homes/${home.id}/members`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -87,176 +95,231 @@ function Home() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to add member')
-      setMembers([...members, data])
+      setMembers([...members, { id: data.id, name: data.name }])
       setMemberName('')
       fetchBalances(home.id)
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to add member'
+      setError(message)
     }
   }
 
   const createBill = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!home) return
-    setLoading(true)
-    setError(null)
     try {
+      setError(null)
       const res = await fetch(`/api/homes/${home.id}/bills`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: billTitle, totalCents: Number(totalCents) }),
+        body: JSON.stringify({ title: billTitle, totalCents: parseInt(totalCents, 10) }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to create bill')
-      setBills([data, ...bills])
+      setBills([...bills, data])
       setBillTitle('')
       setTotalCents('')
       fetchBalances(home.id)
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to create bill'
+      setError(message)
     }
   }
 
   const payShare = async (billId: string, shareId: string) => {
-    setLoading(true)
-    setError(null)
     try {
+      setError(null)
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (idempotencyKey) {
+        headers['Idempotency-Key'] = idempotencyKey
+      }
       const res = await fetch(`/api/bills/${billId}/shares/${shareId}/pay`, {
         method: 'POST',
-        headers: { 'Idempotency-Key': idempotencyKey },
+        headers,
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Payment failed')
-      
-      setBills(bills.map(b => {
-        if (b.id !== billId) return b
-        return {
-          ...b,
-          shares: b.shares.map(s => s.id === shareId ? { ...s, paidAt: data.paidAt } : s)
-        }
-      }))
-      if (home) fetchBalances(home.id)
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
 
-  const fetchBalances = async (homeId: string) => {
-    try {
-      const res = await fetch(`/api/homes/${homeId}/balances`)
-      const data = await res.json()
-      if (res.ok) setBalances(data.balances)
-    } catch (err) {
-      console.error(err)
+      setBills(
+        bills.map((b) => {
+          if (b.id !== billId) return b
+          return {
+            ...b,
+            shares: b.shares.map((s) => (s.id === shareId ? { ...s, paidAt: data.paidAt } : s)),
+          }
+        }),
+      )
+      if (home) fetchBalances(home.id)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Payment failed'
+      setError(message)
     }
   }
 
   return (
-    <div style={{ maxWidth: '800px', margin: '0 auto', padding: '20px', fontFamily: 'Arial, sans-serif' }}>
+    <div
+      style={{
+        maxWidth: '800px',
+        margin: '0 auto',
+        padding: '20px',
+        fontFamily: 'Arial, sans-serif',
+      }}
+    >
       <h1>Shared Bill Splitter</h1>
 
-      {error && <div style={{ background: '#ffe6e6', color: '#cc0000', padding: '10px', marginBottom: '15px', borderRadius: '4px' }}>Error: {error}</div>}
+      {error && (
+        <div
+          style={{
+            background: '#ffe6e6',
+            color: '#cc0000',
+            padding: '10px',
+            marginBottom: '15px',
+            borderRadius: '4px',
+          }}
+        >
+          Error: {error}
+        </div>
+      )}
       {loading && <div style={{ color: '#0066cc', marginBottom: '15px' }}>Loading...</div>}
 
       {!home ? (
-        <form onSubmit={createHome} style={{ marginBottom: '20px', background: '#f9f9f9', padding: '15px', borderRadius: '5px' }}>
+        <form
+          onSubmit={createHome}
+          style={{
+            marginBottom: '20px',
+            background: '#f9f9f9',
+            padding: '15px',
+            borderRadius: '5px',
+          }}
+        >
           <h3>1. Create Home</h3>
-          <input 
-            type="text" 
-            placeholder="Home Name (e.g. Flat 402)" 
-            value={homeName} 
-            onChange={(e) => setHomeName(e.target.value)} 
+          <input
+            type="text"
+            placeholder="Home Name (e.g. Flat 402)"
+            value={homeName}
+            onChange={(e) => setHomeName(e.target.value)}
             required
             style={{ padding: '8px', marginRight: '10px', width: '250px' }}
           />
-          <button type="submit" style={{ padding: '8px 15px' }}>Create Home</button>
+          <button type="submit" style={{ padding: '8px 15px' }}>
+            Create Home
+          </button>
         </form>
       ) : (
         <div>
           <h2>Home: {home.name}</h2>
 
-          <form onSubmit={addMember} style={{ marginBottom: '20px', background: '#f9f9f9', padding: '15px', borderRadius: '5px' }}>
+          <form
+            onSubmit={addMember}
+            style={{
+              marginBottom: '20px',
+              background: '#f9f9f9',
+              padding: '15px',
+              borderRadius: '5px',
+            }}
+          >
             <h3>2. Add Member</h3>
-            <input 
-              type="text" 
-              placeholder="Member Name" 
-              value={memberName} 
-              onChange={(e) => setMemberName(e.target.value)} 
+            <input
+              type="text"
+              placeholder="Member Name"
+              value={memberName}
+              onChange={(e) => setMemberName(e.target.value)}
               required
               style={{ padding: '8px', marginRight: '10px', width: '250px' }}
             />
-            <button type="submit" style={{ padding: '8px 15px' }}>Add Member</button>
+            <button type="submit" style={{ padding: '8px 15px' }}>
+              Add Member
+            </button>
           </form>
 
           <div style={{ marginBottom: '20px' }}>
             <h4>Members List:</h4>
-            {members.length === 0 ? <p>No members added yet.</p> : (
+            {members.length === 0 ? (
+              <p>No members added yet.</p>
+            ) : (
               <ul>
-                {members.map(m => <li key={m.id}>{m.name}</li>)}
+                {members.map((m) => (
+                  <li key={m.id}>{m.name}</li>
+                ))}
               </ul>
             )}
           </div>
 
-          <form onSubmit={createBill} style={{ marginBottom: '20px', background: '#f9f9f9', padding: '15px', borderRadius: '5px' }}>
+          <form
+            onSubmit={createBill}
+            style={{
+              marginBottom: '20px',
+              background: '#f9f9f9',
+              padding: '15px',
+              borderRadius: '5px',
+            }}
+          >
             <h3>3. Add Bill (Total Cents, e.g. 1000 = $10)</h3>
             <div style={{ marginBottom: '10px' }}>
-              <input 
-                type="text" 
-                placeholder="Bill Title (e.g. Groceries)" 
-                value={billTitle} 
-                onChange={(e) => setBillTitle(e.target.value)} 
+              <input
+                type="text"
+                placeholder="Bill Title (e.g. Groceries)"
+                value={billTitle}
+                onChange={(e) => setBillTitle(e.target.value)}
                 required
                 style={{ padding: '8px', marginRight: '10px', width: '250px' }}
               />
-            </div>
-            <div style={{ marginBottom: '10px' }}>
-              <input 
-                type="number" 
-                placeholder="Total Cents" 
-                value={totalCents} 
-                onChange={(e) => setTotalCents(e.target.value)} 
+              <input
+                type="number"
+                placeholder="Total Cents"
+                value={totalCents}
+                onChange={(e) => setTotalCents(e.target.value)}
                 required
-                style={{ padding: '8px', marginRight: '10px', width: '250px' }}
+                style={{ padding: '8px', marginRight: '10px', width: '150px' }}
               />
+              <button type="submit" style={{ padding: '8px 15px' }}>
+                Create Bill
+              </button>
             </div>
-            <button type="submit" style={{ padding: '8px 15px' }}>Create & Split Bill</button>
           </form>
 
           <div style={{ marginBottom: '20px' }}>
-            <h3>Balances</h3>
-            <ul>
-              {balances.map(b => (
-                <li key={b.memberId}>
-                  {b.name}: <b>{b.outstandingCents} cents</b> outstanding
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div>
             <h3>Bills & Shares</h3>
-            {bills.length === 0 ? <p>No bills added yet.</p> : (
-              bills.map(bill => (
-                <div key={bill.id} style={{ border: '1px solid #ddd', padding: '15px', marginBottom: '10px', borderRadius: '5px' }}>
-                  <h4>{bill.title} — Total: {bill.totalCents} cents</h4>
+            {bills.length === 0 ? (
+              <p>No bills created yet.</p>
+            ) : (
+              bills.map((bill) => (
+                <div
+                  key={bill.id}
+                  style={{
+                    background: '#fff',
+                    border: '1px solid #ddd',
+                    padding: '10px',
+                    marginBottom: '10px',
+                    borderRadius: '4px',
+                  }}
+                >
+                  <h4>
+                    {bill.title} (Total: {bill.totalCents} cents)
+                  </h4>
                   <ul>
-                    {bill.shares.map(share => {
-                      const member = members.find(m => m.id === share.memberId)
+                    {bill.shares.map((share) => {
+                      const member = members.find((m) => m.id === share.memberId)
                       return (
-                        <li key={share.id} style={{ margin: '5px 0' }}>
-                          {member ? member.name : 'Member'}: {share.amountCents} cents 
+                        <li key={share.id} style={{ marginBottom: '5px' }}>
+                          {member ? member.name : 'Unknown'}: {share.amountCents} cents{' '}
                           {share.paidAt ? (
-                            <span style={{ color: 'green', marginLeft: '10px' }}>[Paid at {new Date(share.paidAt).toLocaleTimeString()}]</span>
+                            <span style={{ color: 'green', marginLeft: '10px' }}>
+                              [Paid at {new Date(share.paidAt).toLocaleTimeString()}]
+                            </span>
                           ) : (
-                            <button 
-                              onClick={() => payShare(bill.id, share.id)} 
-                              style={{ marginLeft: '10px', padding: '3px 8px', background: '#4CAF50', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer' }}
+                            <button
+                              type="button"
+                              onClick={() => payShare(bill.id, share.id)}
+                              style={{
+                                marginLeft: '10px',
+                                padding: '3px 8px',
+                                background: '#4CAF50',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '3px',
+                                cursor: 'pointer',
+                              }}
                             >
                               Pay Share
                             </button>
@@ -270,13 +333,32 @@ function Home() {
             )}
           </div>
 
-          <div style={{ marginTop: '20px', background: '#eee', padding: '10px', borderRadius: '5px' }}>
-            <label>Idempotency Key for Payments: </label>
-            <input 
-              type="text" 
-              value={idempotencyKey} 
-              onChange={(e) => setIdempotencyKey(e.target.value)} 
-              style={{ padding: '5px', marginLeft: '10px' }}
+          <div style={{ marginBottom: '20px' }}>
+            <h3>Balances</h3>
+            {balances.length === 0 ? (
+              <p>No balances to display.</p>
+            ) : (
+              <ul>
+                {balances.map((b) => (
+                  <li key={b.memberId}>
+                    {b.name}: {b.outstandingCents} cents outstanding
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div
+            style={{ marginTop: '20px', background: '#eee', padding: '10px', borderRadius: '5px' }}
+          >
+            <label htmlFor="idempotencyKeyInput">Idempotency Key for Payments: </label>
+            <input
+              id="idempotencyKeyInput"
+              type="text"
+              placeholder="Optional unique key"
+              value={idempotencyKey}
+              onChange={(e) => setIdempotencyKey(e.target.value)}
+              style={{ padding: '6px', marginLeft: '10px', width: '200px' }}
             />
           </div>
         </div>
